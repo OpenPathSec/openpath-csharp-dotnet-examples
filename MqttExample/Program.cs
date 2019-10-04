@@ -1,4 +1,5 @@
 ﻿using MQTTnet;
+using MQTTnet.Client;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using System;
@@ -54,6 +55,7 @@ namespace MqttExample
 
             // send Openpath API request to fetch temp credentials for connecting to the AWS MQTT broker
             string url = String.Format("{0}/orgs/{1}/mqttCredentials?options=withShadows", apiBase, orgId);
+            Console.WriteLine("fetching URL {0}", url);
             WebRequest webRequest = WebRequest.Create(url);
             webRequest.Headers.Add("Authorization", opAuth);
             HttpWebResponse resp = (HttpWebResponse)webRequest.GetResponse();
@@ -89,13 +91,29 @@ namespace MqttExample
                 .WithWebSocketServer(websocketsUrl)
                 .WithTls()
                 .WithCleanSession()
+                //.WithCommunicationTimeout()
+                //.WithKeepAlivePeriod()
+                //.WithKeepAliveSendInterval()
                 .Build();
             Console.WriteLine("built connect options");
+            // https://github.com/chkr1011/MQTTnet/issues/158#issuecomment-359844952
+            // - without overriding MaxSerivcePointIdleTime, the underlying websockets connection gets closed
+            // by .NET at exactly 100 seconds after opening
+            var defaultMaxServicePointIdleTime = System.Net.ServicePointManager.MaxServicePointIdleTime;
+            System.Net.ServicePointManager.MaxServicePointIdleTime = Timeout.Infinite;
             await mqttClient.ConnectAsync(options, CancellationToken.None);
+            System.Net.ServicePointManager.MaxServicePointIdleTime = defaultMaxServicePointIdleTime;
             Console.WriteLine("connected");
+
+            DateTime startTime = DateTime.Now;
 
             // subscribe to the topics indicated in the mqttCredentials response
             mqttClient.ApplicationMessageReceivedHandler = new MessageHandler();
+            mqttClient.UseDisconnectedHandler(e =>
+            {
+                Console.WriteLine("disconnected");
+                // TODO in a production app, should reconnect/resubscribe here
+            });
             foreach (string topic in subscribeTopics)
             {
                 var subOptions = new MQTTnet.Client.Subscribing.MqttClientSubscribeOptionsBuilder()
@@ -119,7 +137,7 @@ namespace MqttExample
             // sleep loop, waiting for mqtt messages to be received
             while (true)
             {
-                Console.WriteLine("sleeping...");
+                Console.WriteLine("[{0} - {1}] sleeping...", DateTime.Now, DateTime.Now - startTime);
                 Thread.Sleep(1000);
             }
         }
